@@ -1,0 +1,26 @@
+{
+  "name": "checkout-discount-extension",
+  "version": "1.0.0",
+  "description": "Checkout extension for automatic discount application and calculation verification",
+  "main": "src/Checkout.jsx",
+  "scripts": {
+    "build": "shopify app build",
+    "dev": "shopify app dev"
+  },
+  "dependencies": {
+    "@shopify/checkout-ui-extensions": "^0.27.3",
+    "@shopify/checkout-ui-extensions-react": "^0.27.3",
+    "react": "^17.0.0"
+  },
+  "devDependencies": {
+    "@shopify/cli": "^3.0.0"
+  },
+  "keywords": [
+    "shopify",
+    "checkout",
+    "discount",
+    "extension"
+  ],
+  "author": "Discount Management System",
+  "license": "MIT"
+} 

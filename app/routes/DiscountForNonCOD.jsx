@@ -17,6 +17,7 @@ export default function DiscountForNonCOD() {
   const createFetcher = useFetcher();
   const loadFetcher = useFetcher();
   const cleanupFetcher = useFetcher(); // New fetcher for cleanup operations
+  const checkoutFetcher = useFetcher(); // New fetcher for checkout validation
   
   // Form state
   const [discountName, setDiscountName] = useState('');
@@ -412,6 +413,20 @@ export default function DiscountForNonCOD() {
       action: '/api/discounts/cleanup'
     });
   }, [cleanupFetcher]);
+
+  // Checkout validation handler
+  const handleValidateCheckout = useCallback(() => {
+    setNotification({ 
+      type: 'info', 
+      message: 'Validating checkout calculations... This will check if discounts are properly applied.' 
+    });
+    
+    const checkoutFetcher = createFetcher;
+    checkoutFetcher.submit(null, {
+      method: 'POST',
+      action: '/api/checkout/validate'
+    });
+  }, [createFetcher]);
 
   // Handle cleanup responses
   useEffect(() => {
@@ -848,6 +863,114 @@ export default function DiscountForNonCOD() {
             </div>
           </Card>
         </Layout.Section>
+
+        {/* Checkout Validation Section */}
+        <Layout.Section>
+          <Card>
+            <div style={{ padding: '24px' }}>
+              <h2 style={{ marginBottom: '16px', fontSize: '18px', fontWeight: '600' }}>
+                🛒 Checkout Calculation Troubleshooting
+              </h2>
+              
+              <div style={{ marginBottom: '16px' }}>
+                <p style={{ fontSize: '14px', color: '#666', lineHeight: '1.5', marginBottom: '12px' }}>
+                  If your automatic discounts aren't showing the correct calculations at checkout:
+                </p>
+                
+                <div style={{ 
+                  backgroundColor: '#f8f9fa', 
+                  padding: '16px', 
+                  borderRadius: '8px', 
+                  border: '1px solid #e1e3e5',
+                  marginBottom: '16px'
+                }}>
+                  <p style={{ fontSize: '14px', margin: '0 0 8px 0', fontWeight: '500', color: '#495057' }}>
+                    💡 Quick Fix Steps:
+                  </p>
+                  <ol style={{ fontSize: '13px', margin: '0', paddingLeft: '18px', color: '#495057' }}>
+                    <li>Click "Clean Up Discounts" to remove any conflicting discounts</li>
+                    <li>Create a simple test discount (e.g., 10% off)</li>
+                    <li>Go to your store and add a product to cart</li>
+                    <li>Check if the discount calculation shows correctly at checkout</li>
+                  </ol>
+                </div>
+              </div>
+              
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setNotification({ 
+                      type: 'info', 
+                      message: 'Fixing checkout price update issue... Removing problematic discounts and creating a working 10% test discount.' 
+                    });
+                    
+                    createFetcher.submit(null, {
+                      method: 'POST',
+                      action: '/api/discounts/fix-checkout'
+                    });
+                  }}
+                  loading={createFetcher.state === 'submitting' && createFetcher.formAction === '/api/discounts/fix-checkout'}
+                  disabled={createFetcher.state === 'submitting'}
+                >
+                  {createFetcher.state === 'submitting' && createFetcher.formAction === '/api/discounts/fix-checkout'
+                    ? 'Fixing Checkout...' 
+                    : '🛠️ Fix Checkout Pricing'}
+                </Button>
+                
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setNotification({ 
+                      type: 'info', 
+                      message: 'Cleaning up existing discounts to fix checkout calculations... This may take a few seconds.' 
+                    });
+                    
+                    cleanupFetcher.submit(null, {
+                      method: 'POST',
+                      action: '/api/discounts/cleanup'
+                    });
+                  }}
+                  loading={cleanupFetcher.state === 'submitting'}
+                  disabled={cleanupFetcher.state === 'submitting'}
+                >
+                  {cleanupFetcher.state === 'submitting' ? 'Cleaning...' : 'Clean Up Discounts'}
+                </Button>
+                
+                <Button
+                  variant="tertiary"
+                  onClick={() => {
+                    setNotification({ 
+                      type: 'info', 
+                      message: 'Validating checkout calculations... Checking if discounts apply properly at checkout.' 
+                    });
+                    
+                    createFetcher.submit(null, {
+                      method: 'POST',
+                      action: '/api/checkout/validate'
+                    });
+                  }}
+                  loading={createFetcher.state === 'submitting' && createFetcher.formAction === '/api/checkout/validate'}
+                  disabled={createFetcher.state === 'submitting'}
+                >
+                  {createFetcher.state === 'submitting' && createFetcher.formAction === '/api/checkout/validate' 
+                    ? 'Validating...' 
+                    : 'Validate Checkout'}
+                </Button>
+                
+                <Button
+                  variant="tertiary"
+                  onClick={() => {
+                    window.open('https://sumit-testing-store-2.myshopify.com/admin/discounts', '_blank');
+                  }}
+                >
+                  View in Shopify Admin
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </Layout.Section>
+
       </Layout>
 
       <Modal
