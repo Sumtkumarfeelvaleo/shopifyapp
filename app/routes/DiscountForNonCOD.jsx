@@ -140,7 +140,7 @@ export default function DiscountForNonCOD() {
   }, [createFetcher.data, resetForm]);
 
   // Handle submission errors and network errors
-  useEffect(() => {
+  useEffect(() => { 
     if (createFetcher.state === 'idle' && createFetcher.data === undefined && createFetcher.type === 'done') {
       // This could indicate a network error or server error without response
       setNotification({ 

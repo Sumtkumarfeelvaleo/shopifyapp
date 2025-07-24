@@ -202,9 +202,6 @@ export const action = async ({ request }) => {
             title: "${discountTitle}"
             startsAt: "${startDate}"
             endsAt: "${endDate}"
-            customerSelection: {
-              all: true
-            }
             customerGets: {
               value: {
                 ${discountData.type === 'percentage' ? 'percentage' : 'fixedAmount'}: ${discountData.type === 'percentage' ? (discountData.value / 100) : discountData.value}
@@ -213,12 +210,6 @@ export const action = async ({ request }) => {
                 all: true
               }
             }
-            ${discountData.minOrderValue > 0 ? `
-            minimumRequirement: {
-              subtotal: {
-                greaterThanOrEqualTo: "${discountData.minOrderValue}"
-              }
-            }` : ''}
           }) {
             automaticDiscountNode {
               id
@@ -273,12 +264,6 @@ export const action = async ({ request }) => {
                 all: true
               }
             }
-            ${discountData.minOrderValue > 0 ? `
-            minimumRequirement: {
-              subtotal: {
-                greaterThanOrEqualTo: "${discountData.minOrderValue}"
-              }
-            }` : ''}
           }) {
             codeDiscountNode {
               id
