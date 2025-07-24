@@ -16,6 +16,7 @@ export default function DiscountForNonCOD() {
   // API fetchers
   const createFetcher = useFetcher();
   const loadFetcher = useFetcher();
+  const cleanupFetcher = useFetcher(); // New fetcher for cleanup operations
   
   // Form state
   const [discountName, setDiscountName] = useState('');
@@ -81,32 +82,68 @@ export default function DiscountForNonCOD() {
       if (loadFetcher.data.success) {
         setActiveDiscounts(loadFetcher.data.discounts || []);
         setConnectionStatus('connected');
+        setIsLoading(false);
+      } else if (loadFetcher.data.error && loadFetcher.data.error.includes('Permission denied') || 
+                 loadFetcher.data.error.includes('read_discounts') ||
+                 loadFetcher.data.details?.includes('read_discounts')) {
+        setConnectionStatus('permission_error');
+        setNotification({ 
+          type: 'warning', 
+          message: `⚠️ Cannot load existing discounts: Missing permissions. You can still try creating new discounts below.`
+        });
+        setIsLoading(false);
       } else {
         setConnectionStatus('error');
+        setNotification({ 
+          type: 'error', 
+          message: `Failed to load discounts: ${loadFetcher.data.error}${loadFetcher.data.details ? ` - ${loadFetcher.data.details}` : ''}`
+        });
+        setIsLoading(false);
       }
-      setIsLoading(false);
     }
   }, [loadFetcher.data]);
 
   useEffect(() => {
     if (createFetcher.data) {
       if (createFetcher.data.success) {
-        setNotification({ 
-          type: 'success', 
-          message: `${createFetcher.data.message || 'Discount created successfully!'} You can now see it in your Shopify Admin → Discounts.`
-        });
-        // Add new discount to the list
-        setActiveDiscounts(prev => [...prev, createFetcher.data.discount]);
-        // Reset form
-        resetForm();
-        setEditingDiscount(null);
+        const isEdit = createFetcher.formData?.get('isEdit') === 'true';
+        const isDelete = createFetcher.formData?.get('action') === 'delete';
+        
+        if (isDelete) {
+          // Handle successful deletion
+          const deletedId = createFetcher.data.deletedId;
+          setActiveDiscounts(prev => prev.filter(d => d.id !== deletedId));
+          setNotification({ 
+            type: 'success', 
+            message: createFetcher.data.message || 'Discount deleted successfully!'
+          });
+        } else if (isEdit) {
+          // Handle successful edit (currently not implemented)
+          setNotification({ 
+            type: 'info', 
+            message: createFetcher.data.details || 'Edit functionality requires deleting and recreating the discount.'
+          });
+        } else {
+          // Handle successful creation
+          setNotification({ 
+            type: 'success', 
+            message: `${createFetcher.data.message || 'Discount created successfully!'} You can now see it in your Shopify Admin → Discounts.`
+          });
+          // Add new discount to the list
+          if (createFetcher.data.discount) {
+            setActiveDiscounts(prev => [...prev, createFetcher.data.discount]);
+          }
+          // Reset form
+          resetForm();
+          setEditingDiscount(null);
+        }
         
         // Auto-dismiss success notification after 5 seconds
         setTimeout(() => {
           setNotification(null);
         }, 5000);
       } else {
-        const errorMessage = createFetcher.data.error || 'Failed to create discount';
+        const errorMessage = createFetcher.data.error || 'Operation failed';
         let detailsMessage = '';
         let helpText = '';
         
@@ -131,6 +168,7 @@ export default function DiscountForNonCOD() {
         }
         
         console.error('API Error:', createFetcher.data);
+        
         setNotification({ 
           type: 'error', 
           message: errorMessage + detailsMessage + helpText
@@ -225,9 +263,10 @@ export default function DiscountForNonCOD() {
     }
 
     // Show submission feedback
+    const isEditing = !!editingDiscount;
     setNotification({ 
       type: 'info', 
-      message: 'Creating discount... This may take a few seconds.' 
+      message: isEditing ? 'Updating discount... This may take a few seconds.' : 'Creating discount... This may take a few seconds.' 
     });
 
     // Create FormData for API submission
@@ -243,40 +282,155 @@ export default function DiscountForNonCOD() {
     formData.append('orderType', orderType);
     formData.append('autoApply', autoApply.toString());
     formData.append('title', discountName.trim());
+    
+    // Add discount ID if editing
+    if (isEditing) {
+      formData.append('discountId', editingDiscount.id);
+      formData.append('isEdit', 'true');
+    }
 
-    // Submit to API
+    // Submit to appropriate API endpoint
     createFetcher.submit(formData, {
       method: 'POST',
-      action: '/api/discounts/create'
+      action: isEditing ? '/api/discounts/update' : '/api/discounts/create'
     });
-  }, [discountName, discountType, discountValue, minOrderValue, maxDiscount, startDate, endDate, applyTo, orderType, autoApply, createFetcher]);
+  }, [discountName, discountType, discountValue, minOrderValue, maxDiscount, startDate, endDate, applyTo, orderType, autoApply, createFetcher, editingDiscount]);
 
   const handleEdit = useCallback((discount) => {
-    // For now, editing is disabled since it requires additional API endpoints
+    console.log("🔧 Editing discount:", discount);
+    
+    // Set editing mode
+    setEditingDiscount(discount);
+    
+    // Populate form with existing discount data
+    setDiscountName(discount.name || '');
+    setDiscountType(discount.type?.toLowerCase() === 'percentage' ? 'percentage' : 'fixed');
+    
+    // Extract numeric value from formatted value
+    let numericValue = '';
+    if (discount.value) {
+      if (discount.value.includes('%')) {
+        numericValue = discount.value.replace('%', '').trim();
+      } else if (discount.value.includes('$')) {
+        numericValue = discount.value.replace('$', '').trim();
+      } else {
+        numericValue = discount.value;
+      }
+    }
+    setDiscountValue(numericValue);
+    
+    // Extract numeric min order value
+    let minOrder = '';
+    if (discount.minOrderValue && discount.minOrderValue !== '$0.00') {
+      minOrder = discount.minOrderValue.replace('$', '').trim();
+    }
+    setMinOrderValue(minOrder || '0');
+    
+    // Extract numeric max discount
+    let maxDisc = '';
+    if (discount.maxDiscount && discount.maxDiscount !== 'No limit') {
+      maxDisc = discount.maxDiscount.replace('$', '').trim();
+    }
+    setMaxDiscount(maxDisc);
+    
+    // Set dates
+    setStartDate(discount.startDate || '');
+    setEndDate(discount.endDate === 'No end date' ? '' : discount.endDate || '');
+    
+    // Set order type and auto-apply
+    setOrderType(discount.orderType || 'all');
+    setAutoApply(discount.autoApply !== undefined ? discount.autoApply : true);
+    
+    // Set apply to (default for now)
+    setApplyTo('all');
+    
     setNotification({ 
       type: 'info', 
-      message: 'Edit functionality will be available in a future update. Please create a new discount.' 
+      message: `✏️ Editing "${discount.name}". Make your changes and click "Update Discount".` 
     });
   }, []);
 
   const handleDelete = useCallback((id) => {
-    // For now, deletion is disabled since it requires additional API endpoints  
-    setNotification({ 
-      type: 'info', 
-      message: 'Delete functionality will be available in a future update. Please use Shopify Admin to delete discounts.' 
-    });
+    console.log("🗑️ Initiating delete for discount ID:", id);
+    setDeleteTargetId(id);
+    setShowDeleteModal(true);
   }, []);
 
-  const confirmDelete = useCallback(() => {
-    // This would require additional API endpoint for deletion
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTargetId) return;
+    
+    console.log("🗑️ Confirming delete for discount ID:", deleteTargetId);
+    
+    setNotification({ 
+      type: 'info', 
+      message: 'Deleting discount... This may take a few seconds.' 
+    });
+    
+    // Find the discount being deleted to determine its type
+    const discountToDelete = activeDiscounts.find(d => d.id === deleteTargetId);
+    
+    if (!discountToDelete) {
+      setNotification({ 
+        type: 'error', 
+        message: 'Could not find discount to delete.' 
+      });
+      setShowDeleteModal(false);
+      setDeleteTargetId(null);
+      return;
+    }
+    
+    // Create FormData for deletion
+    const formData = new FormData();
+    formData.append('discountId', deleteTargetId);
+    formData.append('discountType', discountToDelete.autoApply ? 'automatic' : 'code');
+    formData.append('action', 'delete');
+    
+    // Submit deletion request
+    createFetcher.submit(formData, {
+      method: 'POST',
+      action: '/api/discounts/delete'
+    });
+    
     setShowDeleteModal(false);
     setDeleteTargetId(null);
-  }, []);
+  }, [deleteTargetId, activeDiscounts, createFetcher]);
 
   const cancelEdit = useCallback(() => {
     setEditingDiscount(null);
     resetForm();
   }, [resetForm]);
+
+  // Cleanup handler for fixing checkout calculations
+  const handleCleanupDiscounts = useCallback(() => {
+    setNotification({ 
+      type: 'info', 
+      message: 'Cleaning up existing discounts to fix checkout calculations... This may take a few seconds.' 
+    });
+    
+    cleanupFetcher.submit(null, {
+      method: 'POST',
+      action: '/api/discounts/cleanup'
+    });
+  }, [cleanupFetcher]);
+
+  // Handle cleanup responses
+  useEffect(() => {
+    if (cleanupFetcher.data) {
+      if (cleanupFetcher.data.success) {
+        setNotification({ 
+          type: 'success', 
+          message: `✅ ${cleanupFetcher.data.message} You can now create a new discount and test the checkout calculations.`
+        });
+        // Reload the discounts list
+        loadFetcher.load('/api/discounts/create');
+      } else {
+        setNotification({ 
+          type: 'error', 
+          message: `Cleanup failed: ${cleanupFetcher.data.error}. ${cleanupFetcher.data.details || ''}`
+        });
+      }
+    }
+  }, [cleanupFetcher.data, loadFetcher]);
 
   // Table rows
   const rows = activeDiscounts.map((discount) => [
@@ -528,10 +682,17 @@ export default function DiscountForNonCOD() {
                     loading={createFetcher.state === 'submitting'}
                     disabled={createFetcher.state === 'submitting'}
                   >
-                    {createFetcher.state === 'submitting' ? 'Creating...' : 'Create Discount'}
+                    {createFetcher.state === 'submitting' 
+                      ? (editingDiscount ? 'Updating...' : 'Creating...') 
+                      : (editingDiscount ? 'Update Discount' : 'Create Discount')
+                    }
                   </Button>
                   {editingDiscount && (
-                    <Button onClick={cancelEdit} disabled={createFetcher.state === 'submitting'}>
+                    <Button 
+                      onClick={cancelEdit} 
+                      disabled={createFetcher.state === 'submitting'}
+                      variant="secondary"
+                    >
                       Cancel Edit
                     </Button>
                   )}
@@ -539,10 +700,10 @@ export default function DiscountForNonCOD() {
                     <p style={{ 
                       fontSize: '14px', 
                       color: '#666', 
-                      margin: 'auto 0',
-                      fontStyle: 'italic'
+                      alignSelf: 'center',
+                      margin: '0'
                     }}>
-                      Please wait, creating your discount in Shopify...
+                      {editingDiscount ? 'Updating discount...' : 'Creating discount...'}
                     </p>
                   )}
                 </div>

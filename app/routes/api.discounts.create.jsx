@@ -131,6 +131,136 @@ export const action = async ({ request }) => {
 
     console.log("✅ Permission tests passed - proceeding with discount creation");
 
+    // STEP 8: Comprehensive cleanup of existing discounts to prevent conflicts
+    console.log("🧹 Comprehensive cleanup of existing discounts to prevent checkout calculation conflicts...");
+    
+    try {
+      // Clean up automatic discounts
+      const existingAutoDiscountsQuery = await admin.graphql(`
+        query {
+          automaticDiscountNodes(first: 50) {
+            edges {
+              node {
+                id
+                automaticDiscount {
+                  ... on DiscountAutomaticBasic {
+                    title
+                    status
+                  }
+                }
+              }
+            }
+          }
+        }
+      `);
+      
+      const existingAutoDiscounts = await existingAutoDiscountsQuery.json();
+      
+      if (!existingAutoDiscounts.errors && existingAutoDiscounts.data?.automaticDiscountNodes?.edges) {
+        const autoDiscountsToDelete = existingAutoDiscounts.data.automaticDiscountNodes.edges;
+        console.log(`🗑️ Found ${autoDiscountsToDelete.length} existing automatic discounts to clean up`);
+        
+        for (const edge of autoDiscountsToDelete) {
+          try {
+            console.log(`🗑️ Deleting automatic discount: ${edge.node.id}`);
+            const deleteResult = await admin.graphql(`
+              mutation {
+                discountAutomaticDelete(id: "${edge.node.id}") {
+                  deletedAutomaticDiscountId
+                  userErrors {
+                    field
+                    message
+                  }
+                }
+              }
+            `);
+            
+            const deleteResponse = await deleteResult.json();
+            if (deleteResponse.data?.discountAutomaticDelete?.deletedAutomaticDiscountId) {
+              console.log(`✅ Successfully deleted automatic discount: ${edge.node.id}`);
+            } else {
+              console.log(`⚠️ Could not delete automatic discount: ${edge.node.id}`, deleteResponse.data?.discountAutomaticDelete?.userErrors);
+            }
+          } catch (deleteError) {
+            console.log(`⚠️ Error deleting automatic discount ${edge.node.id}:`, deleteError.message);
+          }
+        }
+      }
+      
+      // Also clean up conflicting code-based discounts that might interfere
+      console.log("🧹 Cleaning up potentially conflicting code-based discounts...");
+      const existingCodeDiscountsQuery = await admin.graphql(`
+        query {
+          codeDiscountNodes(first: 50) {
+            edges {
+              node {
+                id
+                codeDiscount {
+                  ... on DiscountCodeBasic {
+                    title
+                    status
+                    codes(first: 1) {
+                      edges {
+                        node {
+                          code
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `);
+      
+      const existingCodeDiscounts = await existingCodeDiscountsQuery.json();
+      
+      if (!existingCodeDiscounts.errors && existingCodeDiscounts.data?.codeDiscountNodes?.edges) {
+        const codeDiscountsToDelete = existingCodeDiscounts.data.codeDiscountNodes.edges.filter(edge => {
+          const title = edge.node.codeDiscount?.title?.toLowerCase() || '';
+          // Only delete discounts that might conflict (contain 'prepaid', 'cod', 'test', etc.)
+          return title.includes('prepaid') || title.includes('cod') || title.includes('test') || title.includes('discount');
+        });
+        
+        console.log(`🗑️ Found ${codeDiscountsToDelete.length} potentially conflicting code-based discounts to clean up`);
+        
+        for (const edge of codeDiscountsToDelete) {
+          try {
+            console.log(`🗑️ Deleting code discount: ${edge.node.id} (${edge.node.codeDiscount?.title})`);
+            const deleteResult = await admin.graphql(`
+              mutation {
+                discountCodeDelete(id: "${edge.node.id}") {
+                  deletedCodeDiscountId
+                  userErrors {
+                    field
+                    message
+                  }
+                }
+              }
+            `);
+            
+            const deleteResponse = await deleteResult.json();
+            if (deleteResponse.data?.discountCodeDelete?.deletedCodeDiscountId) {
+              console.log(`✅ Successfully deleted code discount: ${edge.node.id}`);
+            } else {
+              console.log(`⚠️ Could not delete code discount: ${edge.node.id}`, deleteResponse.data?.discountCodeDelete?.userErrors);
+            }
+          } catch (deleteError) {
+            console.log(`⚠️ Error deleting code discount ${edge.node.id}:`, deleteError.message);
+          }
+        }
+      }
+      
+      // Wait a moment for deletions to propagate
+      console.log("⏳ Waiting for discount deletions to propagate...");
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+    } catch (cleanupError) {
+      console.log("⚠️ Could not clean up existing discounts:", cleanupError.message);
+      // Continue with creation anyway
+    }
+
     // NOW PROCEED WITH DISCOUNT CREATION
     console.log("🎯 Creating hardcoded 5% discount using modern discount API...");
     
@@ -178,6 +308,69 @@ export const action = async ({ request }) => {
     console.log("📅 Using dates:", { startDate, endDate });
     console.log("🏷️ Order type:", discountData.orderType);
     console.log("🤖 Auto-apply:", discountData.autoApply);
+    console.log("💰 Discount value (raw):", discountData.value);
+    console.log("💰 Discount type:", discountData.type);
+    
+    // Calculate the correct discount value for GraphQL
+    let graphqlDiscountValue;
+    if (discountData.type === 'percentage') {
+      // For percentage discounts, Shopify expects a decimal between 0 and 1
+      // Validate percentage is between 0 and 100
+      if (discountData.value < 0 || discountData.value > 100) {
+        console.error("❌ Invalid percentage value:", discountData.value);
+        return json({ 
+          error: "Invalid discount percentage", 
+          details: `Percentage must be between 0 and 100, got ${discountData.value}%`,
+          authenticated: true
+        }, { status: 400 });
+      }
+      
+      // CRITICAL: Ensure exact precision for checkout calculations
+      graphqlDiscountValue = parseFloat((discountData.value / 100).toFixed(4));
+      
+      console.log("🎯 CHECKOUT CALCULATION DEBUG:");
+      console.log(`  • Input: ${discountData.value}% discount`);
+      console.log(`  • For AED 141.00 subtotal, should discount: AED ${(141 * discountData.value / 100).toFixed(2)}`);
+      console.log(`  • GraphQL value: ${graphqlDiscountValue} (decimal)`);
+      console.log(`  • Verification: ${graphqlDiscountValue} * 100 = ${(graphqlDiscountValue * 100).toFixed(1)}%`);
+      
+      // Additional validation
+      if (Math.abs(graphqlDiscountValue * 100 - discountData.value) > 0.01) {
+        console.error("❌ Percentage calculation mismatch!");
+        return json({ 
+          error: "Percentage calculation error", 
+          details: `Expected ${discountData.value}% but calculated ${(graphqlDiscountValue * 100).toFixed(2)}%`,
+          authenticated: true
+        }, { status: 400 });
+      }
+      
+      console.log("✅ Percentage calculation verified for checkout");
+    } else {
+      // For fixed amount discounts, validate positive value
+      if (discountData.value <= 0) {
+        console.error("❌ Invalid fixed amount value:", discountData.value);
+        return json({ 
+          error: "Invalid discount amount", 
+          details: `Fixed amount must be positive, got $${discountData.value}`,
+          authenticated: true
+        }, { status: 400 });
+      }
+      
+      graphqlDiscountValue = parseFloat(discountData.value.toFixed(2));
+      console.log("💵 Fixed amount discount for checkout:", `$${graphqlDiscountValue}`);
+    }
+    
+    console.log("🎯 Final GraphQL discount value:", graphqlDiscountValue);
+    
+    // Additional validation: Check if percentage results in a valid decimal
+    if (discountData.type === 'percentage' && (graphqlDiscountValue <= 0 || graphqlDiscountValue > 1)) {
+      console.error("❌ Invalid calculated percentage decimal:", graphqlDiscountValue);
+      return json({ 
+        error: "Percentage calculation error", 
+        details: `Calculated percentage ${graphqlDiscountValue} is outside valid range (0-1)`,
+        authenticated: true
+      }, { status: 400 });
+    }
 
     // Generate a unique discount code
     const discountCode = `${discountData.type === 'percentage' ? 'SAVE' : 'OFF'}${Math.floor(discountData.value)}${Date.now().toString().slice(-4)}`;
@@ -204,7 +397,7 @@ export const action = async ({ request }) => {
             endsAt: "${endDate}"
             customerGets: {
               value: {
-                ${discountData.type === 'percentage' ? 'percentage' : 'fixedAmount'}: ${discountData.type === 'percentage' ? (discountData.value / 100) : discountData.value}
+                ${discountData.type === 'percentage' ? 'percentage' : 'fixedAmount'}: ${graphqlDiscountValue}
               }
               items: {
                 all: true
@@ -258,7 +451,7 @@ export const action = async ({ request }) => {
             }
             customerGets: {
               value: {
-                ${discountData.type === 'percentage' ? 'percentage' : 'fixedAmount'}: ${discountData.type === 'percentage' ? (discountData.value / 100) : discountData.value}
+                ${discountData.type === 'percentage' ? 'percentage' : 'fixedAmount'}: ${graphqlDiscountValue}
               }
               items: {
                 all: true
@@ -306,8 +499,52 @@ export const action = async ({ request }) => {
       `;
     }
 
+    console.log("🎯 Executing GraphQL mutation:", discountMutation);
+    // Log the exact mutation being sent to Shopify
+    console.log("📤 SENDING GRAPHQL MUTATION TO SHOPIFY:");
+    console.log("==============================================");
+    console.log(discountMutation);
+    console.log("==============================================");
+    console.log(`🔍 DEBUG: Percentage value being sent: ${graphqlDiscountValue}`);
+    console.log(`🔍 DEBUG: Should apply ${discountData.value}% discount`);
+    console.log(`🔍 DEBUG: Mutation type: ${discountData.autoApply ? 'AUTOMATIC' : 'CODE-BASED'}`);
+    
+    console.log("📤 ===============================================");
+    console.log("📤 SENDING DISCOUNT CREATION TO SHOPIFY");
+    console.log("📤 ===============================================");
+    console.log("🔍 CALCULATION DEBUG:");
+    console.log(`  • Original input: ${discountData.value}% discount`);
+    console.log(`  • Expected: ${discountData.value}% off subtotal`);
+    console.log(`  • GraphQL value: ${graphqlDiscountValue} (should be ${discountData.value/100})`);
+    console.log(`  • Discount type: ${discountData.autoApply ? 'AUTOMATIC (auto-apply)' : 'CODE-BASED (manual)'}`);
+    console.log(`  • Order type: ${discountData.orderType}`);
+    console.log("📤 GraphQL Mutation:");
+    console.log(discountMutation);
+    console.log("📤 ===============================================");
+    
     const discountResponse = await admin.graphql(discountMutation);
     const discountResult = await discountResponse.json();
+    
+    console.log("📥 ===============================================");
+    console.log("📥 SHOPIFY RESPONSE RECEIVED");
+    console.log("📥 ===============================================");
+    console.log("🎯 Full response:", JSON.stringify(discountResult, null, 2));
+    
+    // Check if the discount was created successfully and log the actual percentage returned
+    if (discountResult.data) {
+      const returnedDiscount = discountResult.data.discountAutomaticBasicCreate?.automaticDiscountNode?.automaticDiscount ||
+                              discountResult.data.discountCodeBasicCreate?.codeDiscountNode?.codeDiscount;
+      
+      if (returnedDiscount?.customerGets?.value?.percentage) {
+        const returnedPercentage = returnedDiscount.customerGets.value.percentage;
+        const expectedPercentage = discountData.value / 100;
+        console.log("✅ PERCENTAGE VALIDATION:");
+        console.log(`  • Returned by Shopify: ${returnedPercentage} (${returnedPercentage * 100}%)`);
+        console.log(`  • Expected: ${expectedPercentage} (${discountData.value}%)`);
+        console.log(`  • Match: ${Math.abs(returnedPercentage - expectedPercentage) < 0.0001 ? '✅ CORRECT' : '❌ MISMATCH!'}`);
+      }
+    }
+    console.log("📥 ===============================================");
     console.log("🎯 Discount creation result:", JSON.stringify(discountResult, null, 2));
 
     // Enhanced error checking with detailed logging
@@ -534,11 +771,100 @@ export const loader = async ({ request }) => {
       });
     }
 
-    // Step 4: Fetch existing discount codes using the modern API
-    console.log("📋 Fetching existing discount codes from Shopify...");
+    // Step 4: Fetch BOTH automatic and code-based discount types
+    console.log("📋 Fetching ALL discount types from Shopify...");
+    
+    const allDiscounts = [];
     
     try {
-      const discountQuery = await admin.graphql(`
+      // Fetch Automatic Discounts
+      console.log("🤖 Fetching automatic discounts...");
+      const automaticDiscountQuery = await admin.graphql(`
+        query {
+          automaticDiscountNodes(first: 50) {
+            edges {
+              node {
+                id
+                automaticDiscount {
+                  ... on DiscountAutomaticBasic {
+                    title
+                    status
+                    startsAt
+                    endsAt
+                    customerGets {
+                      value {
+                        ... on DiscountAmount {
+                          amount {
+                            amount
+                            currencyCode
+                          }
+                        }
+                        ... on DiscountPercentage {
+                          percentage
+                        }
+                      }
+                    }
+                    createdAt
+                    updatedAt
+                  }
+                }
+              }
+            }
+          }
+        }
+      `);
+
+      const automaticResult = await automaticDiscountQuery.json();
+      
+      if (automaticResult.errors) {
+        console.log("⚠️ Error fetching automatic discounts:", automaticResult.errors);
+      } else {
+        const autoDiscounts = automaticResult.data?.automaticDiscountNodes?.edges || [];
+        console.log(`🤖 Found ${autoDiscounts.length} automatic discounts`);
+        
+        // Format automatic discounts
+        autoDiscounts.forEach(edge => {
+          const discount = edge.node.automaticDiscount;
+          if (discount) {
+            let discountType = 'Unknown';
+            let discountValue = 'Unknown';
+            
+            if (discount.customerGets?.value) {
+              const value = discount.customerGets.value;
+              if (value.percentage !== undefined) {
+                discountType = 'Percentage';
+                discountValue = `${(value.percentage * 100).toFixed(1)}%`;
+              } else if (value.amount) {
+                discountType = 'Fixed Amount';
+                discountValue = `${value.amount.currencyCode} ${value.amount.amount}`;
+              }
+            }
+            
+            allDiscounts.push({
+              id: edge.node.id,
+              name: discount.title || 'Unnamed Automatic Discount',
+              code: 'AUTO-APPLY',
+              type: discountType,
+              value: discountValue,
+              minOrderValue: '$0.00',
+              maxDiscount: 'No limit',
+              startDate: discount.startsAt ? discount.startsAt.split('T')[0] : 'No start date',
+              endDate: discount.endsAt ? discount.endsAt.split('T')[0] : 'No end date',
+              status: discount.status || 'UNKNOWN',
+              usageCount: 0,
+              usageLimit: 'Unlimited',
+              orderType: 'all', // Default for existing discounts
+              autoApply: true, // Automatic discounts always auto-apply
+              createdAt: discount.createdAt || new Date().toISOString(),
+              shopifyDiscountNodeId: edge.node.id
+            });
+          }
+        });
+      }
+
+      // Fetch Code-based Discounts
+      console.log("🎫 Fetching code-based discounts...");
+      const codeDiscountQuery = await admin.graphql(`
         query {
           codeDiscountNodes(first: 50) {
             edges {
@@ -570,48 +896,6 @@ export const loader = async ({ request }) => {
                         }
                       }
                     }
-                    minimumRequirement {
-                      ... on DiscountMinimumSubtotal {
-                        greaterThanOrEqualToSubtotal {
-                          amount
-                          currencyCode
-                        }
-                      }
-                    }
-                    usageLimit
-                    asyncUsageCount
-                    createdAt
-                    updatedAt
-                  }
-                  ... on DiscountCodeBxgy {
-                    title
-                    codes(first: 10) {
-                      edges {
-                        node {
-                          code
-                        }
-                      }
-                    }
-                    status
-                    startsAt
-                    endsAt
-                    usageLimit
-                    asyncUsageCount
-                    createdAt
-                    updatedAt
-                  }
-                  ... on DiscountCodeFreeShipping {
-                    title
-                    codes(first: 10) {
-                      edges {
-                        node {
-                          code
-                        }
-                      }
-                    }
-                    status
-                    startsAt
-                    endsAt
                     usageLimit
                     asyncUsageCount
                     createdAt
@@ -624,15 +908,14 @@ export const loader = async ({ request }) => {
         }
       `);
 
-      const discountResult = await discountQuery.json();
-      console.log("📊 Discount query result:", JSON.stringify(discountResult, null, 2));
+      const codeResult = await codeDiscountQuery.json();
+      console.log("📊 Code discount query result:", JSON.stringify(codeResult, null, 2));
 
-      // Check for GraphQL errors
-      if (discountResult.errors && discountResult.errors.length > 0) {
-        console.error("❌ GraphQL errors fetching discounts:", discountResult.errors);
+      if (codeResult.errors && codeResult.errors.length > 0) {
+        console.error("❌ GraphQL errors fetching code discounts:", codeResult.errors);
         
         // Check for permission errors specifically
-        const hasPermissionError = discountResult.errors.some(e => 
+        const hasPermissionError = codeResult.errors.some(e => 
           e.message && (e.message.includes('read_discounts') || e.message.includes('access'))
         );
         
@@ -641,96 +924,78 @@ export const loader = async ({ request }) => {
             error: "Permission denied for reading discounts", 
             details: "The app does not have permission to read discounts. Please ensure the app has 'read_discounts' scope.",
             success: false,
-            discounts: [],
-            message: "Unable to load discounts due to permissions. Discount creation may still work."
+            discounts: allDiscounts, // Return automatic discounts if we have them
+            message: "Unable to load code discounts due to permissions. Auto-apply discounts shown."
           });
         }
+      } else {
+        const codeDiscounts = codeResult.data?.codeDiscountNodes?.edges || [];
+        console.log(`🎫 Found ${codeDiscounts.length} code discounts`);
         
-        return json({ 
-          error: "GraphQL error fetching discounts", 
-          details: discountResult.errors.map(e => e.message).join(', '),
-          success: false,
-          discounts: []
+        // Format code-based discounts
+        codeDiscounts.forEach(edge => {
+          const discount = edge.node.codeDiscount;
+          if (discount) {
+            const firstCode = discount.codes?.edges?.[0]?.node?.code || 'No Code';
+            
+            let discountType = 'Unknown';
+            let discountValue = 'Unknown';
+            
+            if (discount.customerGets?.value) {
+              const value = discount.customerGets.value;
+              if (value.percentage !== undefined) {
+                discountType = 'Percentage';
+                discountValue = `${(value.percentage * 100).toFixed(1)}%`;
+              } else if (value.amount) {
+                discountType = 'Fixed Amount';
+                discountValue = `${value.amount.currencyCode} ${value.amount.amount}`;
+              }
+            }
+            
+            // Determine order type from title
+            const title = discount.title?.toLowerCase() || '';
+            let orderType = 'all';
+            if (title.includes('cod only') || title.includes('(cod only)')) {
+              orderType = 'cod';
+            } else if (title.includes('prepaid only') || title.includes('(prepaid only)')) {
+              orderType = 'prepaid';
+            }
+            
+            allDiscounts.push({
+              id: edge.node.id,
+              name: discount.title || 'Unnamed Code Discount',
+              code: firstCode,
+              type: discountType,
+              value: discountValue,
+              minOrderValue: '$0.00',
+              maxDiscount: 'No limit',
+              startDate: discount.startsAt ? discount.startsAt.split('T')[0] : 'No start date',
+              endDate: discount.endsAt ? discount.endsAt.split('T')[0] : 'No end date',
+              status: discount.status || 'UNKNOWN',
+              usageCount: discount.asyncUsageCount || 0,
+              usageLimit: discount.usageLimit || 'Unlimited',
+              orderType: orderType,
+              autoApply: false, // Code discounts are manual
+              createdAt: discount.createdAt || new Date().toISOString(),
+              shopifyDiscountNodeId: edge.node.id
+            });
+          }
         });
       }
 
-      // Process and format the discount data
-      const discountNodes = discountResult.data?.codeDiscountNodes?.edges || [];
-      console.log(`📋 Found ${discountNodes.length} discount codes`);
-
-      const formattedDiscounts = discountNodes.map(edge => {
-        const node = edge.node;
-        const discount = node.codeDiscount;
-        
-        // Get the first discount code
-        const firstCode = discount.codes?.edges?.[0]?.node?.code || 'No Code';
-        
-        // Determine discount type and value
-        let discountType = 'Unknown';
-        let discountValue = 'Unknown';
-        let minOrderValue = '$0.00';
-        
-        if (discount.customerGets?.value) {
-          const value = discount.customerGets.value;
-          if (value.percentage !== undefined) {
-            discountType = 'Percentage';
-            discountValue = `${(value.percentage * 100).toFixed(1)}%`;
-          } else if (value.amount) {
-            discountType = 'Fixed Amount';
-            discountValue = `${value.amount.currencyCode} ${value.amount.amount}`;
-          }
-        }
-        
-        // Get minimum order value
-        if (discount.minimumRequirement?.greaterThanOrEqualToSubtotal) {
-          const minSubtotal = discount.minimumRequirement.greaterThanOrEqualToSubtotal;
-          minOrderValue = `${minSubtotal.currencyCode} ${minSubtotal.amount}`;
-        }
-        
-        return {
-          id: node.id,
-          name: discount.title || 'Unnamed Discount',
-          code: firstCode,
-          type: discountType,
-          value: discountValue,
-          minOrderValue: minOrderValue,
-          maxDiscount: 'No limit', // This might not be available in the basic query
-          startDate: discount.startsAt ? discount.startsAt.split('T')[0] : 'No start date',
-          endDate: discount.endsAt ? discount.endsAt.split('T')[0] : 'No end date',
-          status: discount.status || 'UNKNOWN',
-          usageCount: discount.asyncUsageCount || 0,
-          usageLimit: discount.usageLimit || 'Unlimited',
-          createdAt: discount.createdAt || new Date().toISOString(),
-          shopifyDiscountNodeId: node.id
-        };
-      });
-
-      console.log("✅ Successfully formatted discounts:", formattedDiscounts.length);
+      console.log(`✅ Total discounts found: ${allDiscounts.length}`);
+      console.log("📋 Formatted discounts:", allDiscounts);
 
       return json({ 
         success: true, 
-        discounts: formattedDiscounts,
-        message: formattedDiscounts.length > 0 
-          ? `Successfully loaded ${formattedDiscounts.length} discount codes from Shopify`
-          : "No discount codes found in your Shopify store"
+        discounts: allDiscounts,
+        message: allDiscounts.length > 0 
+          ? `Successfully loaded ${allDiscounts.length} discount(s) from Shopify`
+          : "No discounts found in your Shopify store. Ready to create your first discount!"
       });
 
     } catch (discountFetchError) {
       console.error("❌ Error fetching discounts:", discountFetchError.message);
-      
-      // Check if it's a permission error
-      const isPermissionError = discountFetchError.message && 
-        discountFetchError.message.includes('read_discounts');
-      
-      if (isPermissionError) {
-        return json({ 
-          error: "Permission denied for reading discounts", 
-          details: "The app needs 'read_discounts' permission to fetch existing discount codes.",
-          success: false,
-          discounts: [],
-          message: "Unable to load existing discounts. Discount creation may still work if you have write permissions."
-        });
-      }
       
       return json({ 
         error: "Failed to fetch discounts", 
