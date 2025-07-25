@@ -1,34 +1,18 @@
 name = "checkout-discount"
-type = "checkout_ui_extension"
+api_version = "2024-07"
 
 [[extensions]]
-type = "checkout_ui_extension"
+
+uid = "24a4e01b-0feb-dfed-8250-f743d27dae98157c6842"
+
+type = "ui_extension"
 name = "checkout-discount-monitor"
 handle = "checkout-discount-monitor"
 
-[extensions.targeting]
-targets = [
-  "purchase.checkout.delivery-address.render-after",
-  "purchase.checkout.payment-method.render-after",
-  "purchase.checkout.shipping-option.render-after"
-]
+[[extensions.targeting]]
+target = "purchase.checkout.delivery-address.render-after"
+module = "./src/Checkout.jsx"
 
 [extensions.capabilities]
-block_progress = false
 network_access = true
-api_access = true
-
-[extensions.settings]
-[[extensions.settings.fields]]
-key = "enable_discount_monitoring"
-type = "boolean"
-name = "Enable Discount Monitoring"
-description = "Monitor and verify discount calculations at checkout"
-default = true
-
-[[extensions.settings.fields]]
-key = "show_discount_details"
-type = "boolean" 
-name = "Show Discount Details"
-description = "Display detailed discount information to customers"
-default = true 
+api_access = true 
