@@ -389,6 +389,16 @@ export const action = async ({ request }) => {
     if (discountData.autoApply) {
       // For auto-apply discounts, we'll create an automatic discount (no code needed)
       console.log("🤖 Creating automatic discount (no code required)");
+      
+      // Build the minimum requirement section properly
+      const minimumReqSection = discountData.minOrderValue > 0 
+        ? `minimumRequirement: { 
+             subtotal: { 
+               greaterThanOrEqualTo: "${discountData.minOrderValue.toFixed(2)}" 
+             } 
+           }` 
+        : '';
+      
       discountMutation = `
         mutation {
           discountAutomaticBasicCreate(automaticBasicDiscount: {
@@ -403,6 +413,7 @@ export const action = async ({ request }) => {
                 all: true
               }
             }
+            ${minimumReqSection}
           }) {
             automaticDiscountNode {
               id
@@ -425,6 +436,14 @@ export const action = async ({ request }) => {
                       }
                     }
                   }
+                  minimumRequirement {
+                    ... on DiscountMinimumSubtotal {
+                      greaterThanOrEqualToSubtotal {
+                        amount
+                        currencyCode
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -439,6 +458,16 @@ export const action = async ({ request }) => {
     } else {
       // For manual discounts, create a code-based discount
       console.log("🎫 Creating code-based discount:", discountCode);
+      
+      // Build the minimum requirement section properly
+      const minimumReqSection = discountData.minOrderValue > 0 
+        ? `minimumRequirement: { 
+             subtotal: { 
+               greaterThanOrEqualTo: "${discountData.minOrderValue.toFixed(2)}" 
+             } 
+           }` 
+        : '';
+      
       discountMutation = `
         mutation {
           discountCodeBasicCreate(basicCodeDiscount: {
@@ -457,6 +486,8 @@ export const action = async ({ request }) => {
                 all: true
               }
             }
+            ${minimumReqSection}
+            usageLimit: ${discountData.usageLimit || 'null'}
           }) {
             codeDiscountNode {
               id
@@ -483,6 +514,19 @@ export const action = async ({ request }) => {
                           amount
                           currencyCode
                         }
+                      }
+                    }
+                  }
+                  customerSelection {
+                    ... on DiscountCustomerAll {
+                      allCustomers
+                    }
+                  }
+                  minimumRequirement {
+                    ... on DiscountMinimumSubtotal {
+                      greaterThanOrEqualToSubtotal {
+                        amount
+                        currencyCode
                       }
                     }
                   }

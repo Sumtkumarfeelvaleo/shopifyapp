@@ -10,9 +10,10 @@ name = "checkout-discount-monitor"
 handle = "checkout-discount-monitor"
 
 [[extensions.targeting]]
-target = "purchase.checkout.delivery-address.render-after"
+target = "purchase.checkout.cart-line-list.render-after"
 module = "./src/Checkout.jsx"
 
 [extensions.capabilities]
 network_access = true
-api_access = true 
+api_access = true
+block_progress = false 
