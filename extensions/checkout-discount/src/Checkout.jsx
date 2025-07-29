@@ -9,7 +9,7 @@ import {
   BlockSpacer,
   InlineLayout,
   View,
-} from '@shopify/ui-extensions-react/checkout';
+} from '@shopify/checkout-ui-extensions-react';
 
 export default reactExtension(
   'purchase.checkout.cart-line-list.render-after',
