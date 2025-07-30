@@ -63,6 +63,39 @@ export default function DiscountForNonCOD() {
   const handleOrderTypeChange = useCallback((e) => setOrderType(e.target.value), []);
   const handleAutoApplyChange = useCallback((value) => setAutoApply(value), []);
 
+  // Automatically adjust settings based on user choices for COD/Prepaid and Auto-Apply
+  useEffect(() => {
+    // If auto-apply is enabled, the discount MUST be for prepaid orders only.
+    if (autoApply) {
+      if (orderType !== 'prepaid') {
+        setOrderType('prepaid');
+        setNotification({
+          type: 'info',
+          message: 'Auto-apply is only available for prepaid orders. Order type has been set to "Prepaid Only".'
+        });
+        // Auto-dismiss after a few seconds
+        const timer = setTimeout(() => setNotification(null), 5000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [autoApply, orderType]);
+
+  useEffect(() => {
+    // If the discount is for COD or all orders, it cannot be auto-applied.
+    if (orderType === 'cod' || orderType === 'all') {
+      if (autoApply) {
+        setAutoApply(false);
+        setNotification({
+          type: 'info',
+          message: 'Auto-apply is not available for COD or all order types. Auto-apply has been disabled.'
+        });
+        // Auto-dismiss after a few seconds
+        const timer = setTimeout(() => setNotification(null), 5000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [orderType, autoApply]);
+
   const resetForm = useCallback(() => {
     setDiscountName('');
     setDiscountValue('');
@@ -588,21 +621,23 @@ export default function DiscountForNonCOD() {
                   <div>
                     <h3 style={{ marginBottom: '12px', fontSize: '14px', fontWeight: '500' }}>Order Type:</h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: autoApply ? 'not-allowed' : 'pointer', opacity: autoApply ? 0.6 : 1 }}>
                         <input
                           type="radio"
                           value="all"
                           checked={orderType === 'all'}
                           onChange={handleOrderTypeChange}
+                          disabled={autoApply}
                         />
                         All Orders
                       </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: autoApply ? 'not-allowed' : 'pointer', opacity: autoApply ? 0.6 : 1 }}>
                         <input
                           type="radio"
                           value="cod"
                           checked={orderType === 'cod'}
                           onChange={handleOrderTypeChange}
+                          disabled={autoApply}
                         />
                         COD Orders Only
                       </label>
@@ -621,12 +656,19 @@ export default function DiscountForNonCOD() {
                   <div>
                     <h3 style={{ marginBottom: '12px', fontSize: '14px', fontWeight: '500' }}>Checkout Behavior:</h3>
                     <div style={{ padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '8px', border: '1px solid #e1e1e1' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                      <label style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '8px', 
+                        cursor: (orderType === 'cod' || orderType === 'all') ? 'not-allowed' : 'pointer',
+                        opacity: (orderType === 'cod' || orderType === 'all') ? 0.6 : 1
+                      }}>
                         <input
                           type="checkbox"
                           checked={autoApply}
                           onChange={(e) => handleAutoApplyChange(e.target.checked)}
                           style={{ transform: 'scale(1.2)' }}
+                          disabled={orderType === 'cod' || orderType === 'all'}
                         />
                         <span style={{ fontSize: '14px', fontWeight: '500' }}>
                           Auto-apply at checkout
@@ -635,7 +677,9 @@ export default function DiscountForNonCOD() {
                       <p style={{ fontSize: '12px', color: '#666', marginTop: '4px', marginLeft: '24px' }}>
                         {autoApply 
                           ? '✅ Discount will be automatically applied to eligible orders'
-                          : '⚪ Customers will need to enter the discount code manually'
+                          : (orderType === 'cod' || orderType === 'all')
+                            ? 'ℹ️ Not available for COD or All Order types'
+                            : '⚪ Customers will need to enter the discount code manually'
                         }
                       </p>
                     </div>
